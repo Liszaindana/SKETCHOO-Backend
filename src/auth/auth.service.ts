@@ -1,235 +1,338 @@
 import {
-  BadGatewayException,
+  BadRequestException,
+  ConflictException,
   HttpException,
+  HttpStatus,
   Injectable,
+  Logger,
   ServiceUnavailableException,
+  UnprocessableEntityException,
   UnauthorizedException,
 } from '@nestjs/common';
-import type { AuthUser, SupabaseSession } from './auth.types.js';
-import type { RegisterDto } from './dto/register.dto.js';
-import type { LoginDto } from './dto/login.dto.js';
+import { ConfigService } from '@nestjs/config';
+import { createHash, randomBytes } from 'node:crypto';
+import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 
-interface SupabaseErrorBody {
-  message?: string;
-  msg?: string;
-  error_description?: string;
-  code?: string;
-}
+const RESET_TOKEN_TTL_SECONDS = 300;
 
 @Injectable()
 export class AuthService {
-  private get config(): { url: string; key: string; resetRedirectUrl?: string } {
-    const url = process.env.SUPABASE_URL?.replace(/\/$/, '');
-    const key = process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY;
-    if (!url || !key) {
-      throw new ServiceUnavailableException(
-        'Authentication service is not configured. Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.',
-      );
-    }
-    if (!this.isPublishableKey(key)) {
-      throw new ServiceUnavailableException(
-        'SUPABASE_PUBLISHABLE_KEY must contain a Supabase publishable key or legacy anon key. Do not use a secret or service_role key.',
-      );
-    }
-    return { url, key, resetRedirectUrl: process.env.SUPABASE_RESET_REDIRECT_URL };
-  }
+  private readonly logger = new Logger(AuthService.name);
 
-  private isPublishableKey(key: string): boolean {
-    if (key.startsWith('sb_secret_')) return false;
-    if (key.startsWith('sb_publishable_')) return true;
-    try {
-      const payload = key.split('.')[1];
-      if (!payload) return false;
-      const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
-        role?: string;
-      };
-      return claims.role === 'anon';
-    } catch {
-      return false;
-    }
-  }
+  constructor(private readonly config: ConfigService) {}
 
-  async register(input: RegisterDto) {
-    const result = await this.request<{ user: AuthUser; session: SupabaseSession | null }>(
-      '/auth/v1/signup',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          email: input.email.trim().toLowerCase(),
-          password: input.password,
-          data: { full_name: input.fullName.trim() },
-        }),
-      },
-    );
+  async register(input: { name: string; email: string; password: string }) {
+    const { data, error } = await this.publicClient().auth.signUp({
+      email: this.normalizeEmail(input.email),
+      password: input.password,
+      options: { data: { name: input.name.trim() } },
+    });
+
+    if (error) {
+      if (/already (registered|exists)|user already/i.test(error.message)) {
+        throw new ConflictException({
+          code: 'EMAIL_ALREADY_REGISTERED',
+          message: 'Email sudah terdaftar.',
+        });
+      }
+      this.throwProviderError(error, 'register');
+    }
+    if (data.user?.identities?.length === 0) {
+      throw new ConflictException({
+        code: 'EMAIL_ALREADY_REGISTERED',
+        message: 'Email sudah terdaftar.',
+      });
+    }
 
     return {
-      success: true,
-      message: 'Registration successful',
-      data: {
-        user: {
-          id: result.user.id,
-          fullName: this.fullName(result.user),
-          email: result.user.email,
-        },
-      },
+      user: this.toPublicUser(data.user),
+      message: 'Akun berhasil dibuat. Silakan masuk.',
     };
   }
 
-  async login(input: LoginDto) {
-    const session = await this.request<SupabaseSession>(
-      '/auth/v1/token?grant_type=password',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          email: input.email.trim().toLowerCase(),
-          password: input.password,
-        }),
-      },
-    );
+  async login(email: string, password: string) {
+    const { data, error } = await this.publicClient().auth.signInWithPassword({
+      email: this.normalizeEmail(email),
+      password,
+    });
+    if (error?.status === 429) {
+      throw new HttpException('Terlalu banyak percobaan. Coba lagi nanti.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    if (error?.status && error.status >= 500) {
+      throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
+    }
+    if (error || !data.session || !data.user) {
+      throw new UnauthorizedException('Email atau password salah.');
+    }
+
     return {
-      success: true,
-      message: 'Login successful',
-      data: this.sessionResponse(session),
+      user: this.toPublicUser(data.user),
+      access_token: data.session.access_token,
+      token_type: 'Bearer',
+      expires_in: data.session.expires_in,
+      refresh_token: data.session.refresh_token,
     };
   }
 
   async refresh(refreshToken: string) {
-    const session = await this.request<SupabaseSession>(
-      '/auth/v1/token?grant_type=refresh_token',
-      { method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }) },
-    );
-    return {
-      success: true,
-      message: 'Session refreshed successfully',
-      data: this.sessionResponse(session),
-    };
-  }
-
-  async forgotPassword(email: string) {
-    const { resetRedirectUrl } = this.config;
-    const redirect = resetRedirectUrl
-      ? `?redirect_to=${encodeURIComponent(resetRedirectUrl)}`
-      : '';
-    await this.request<unknown>(`/auth/v1/recover${redirect}`, {
-      method: 'POST',
-      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    const { data, error } = await this.publicClient().auth.refreshSession({
+      refresh_token: refreshToken,
     });
-    return {
-      success: true,
-      message: 'If an account exists for this email, password reset instructions have been sent.',
-      data: null,
-    };
-  }
+    if (error?.status === 429) {
+      throw new HttpException('Terlalu banyak percobaan. Coba lagi nanti.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    if (error?.status && error.status >= 500) {
+      throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
+    }
+    if (error || !data.session || !data.user) {
+      throw new UnauthorizedException('Refresh token tidak valid atau kedaluwarsa.');
+    }
 
-  async getUser(accessToken: string): Promise<AuthUser> {
-    return this.request<AuthUser>('/auth/v1/user', {
-      method: 'GET',
-      accessToken,
-    });
+    return {
+      user: this.toPublicUser(data.user),
+      access_token: data.session.access_token,
+      token_type: 'Bearer',
+      expires_in: data.session.expires_in,
+      refresh_token: data.session.refresh_token,
+    };
   }
 
   async logout(accessToken: string) {
-    await this.request<unknown>('/auth/v1/logout', {
+    const response = await this.authRequest('/logout?scope=global', accessToken, {
       method: 'POST',
-      accessToken,
     });
-    return { success: true, message: 'Logout successful', data: null };
+    if (!response.ok && response.status !== 204) {
+      if (response.status === 401) {
+        throw new UnauthorizedException('Access token tidak valid.');
+      }
+      throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
+    }
   }
 
-  currentUser(user: AuthUser) {
-    return {
-      success: true,
-      message: 'Current user retrieved successfully',
-      data: {
-        id: user.id,
-        fullName: this.fullName(user),
-        email: user.email,
-        // Membership storage is not defined in the current repository/spec database setup.
-        memberships: [],
-      },
-    };
-  }
-
-  private fullName(user: AuthUser): string | null {
-    const value = user.user_metadata?.full_name;
-    return typeof value === 'string' ? value : null;
-  }
-
-  private sessionResponse(session: SupabaseSession) {
-    return {
-      accessToken: session.access_token,
-      refreshToken: session.refresh_token,
-      expiresIn: session.expires_in,
-      tokenType: session.token_type,
-      user: {
-        id: session.user.id,
-        fullName: this.fullName(session.user),
-        email: session.user.email,
-      },
-    };
-  }
-
-  private async request<T>(
-    path: string,
-    options: { method: string; body?: string; accessToken?: string },
-  ): Promise<T> {
-    const { url, key } = this.config;
-    let response: Response;
+  async getUser(accessToken: string): Promise<User> {
+    let result;
     try {
-      response = await fetch(`${url}${path}`, {
-        method: options.method,
+      result = await this.publicClient().auth.getUser(accessToken);
+    } catch {
+      throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
+    }
+    const { data, error } = result;
+    if (error?.status === 429) {
+      throw new HttpException('Terlalu banyak percobaan. Coba lagi nanti.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    if (error?.status && error.status >= 500) {
+      throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
+    }
+    if (error || !data.user) {
+      throw new UnauthorizedException('Access token tidak valid.');
+    }
+    return data.user;
+  }
+
+  async updateName(accessToken: string, name: string) {
+    const response = await this.authRequest('/user', accessToken, {
+      method: 'PUT',
+      body: JSON.stringify({ data: { name: name.trim() } }),
+    });
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new UnauthorizedException('Access token tidak valid.');
+      }
+      throw new ServiceUnavailableException('Profil tidak dapat diperbarui saat ini.');
+    }
+
+    const user = (await response.json()) as User;
+    return this.toPublicUser(user);
+  }
+
+  async forgotPassword(email: string) {
+    const redirectTo = this.config.get<string>('SUPABASE_RESET_REDIRECT_URL');
+    const { error } = await this.publicClient().auth.resetPasswordForEmail(
+      this.normalizeEmail(email),
+      redirectTo ? { redirectTo } : undefined,
+    );
+    if (error) {
+      if (error.status === 429) {
+        throw new HttpException('Terlalu banyak percobaan. Coba lagi nanti.', HttpStatus.TOO_MANY_REQUESTS);
+      }
+      if (error.status && error.status >= 500) {
+        throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
+      }
+    }
+
+    return {
+      message: 'Jika email terdaftar, kode verifikasi akan dikirim.',
+    };
+  }
+
+  async verifyResetCode(email: string, code: string) {
+    const { data, error } = await this.publicClient().auth.verifyOtp({
+      email: this.normalizeEmail(email),
+      token: code,
+      type: 'recovery',
+    });
+    if (error || !data.user) {
+      throw new BadRequestException('Kode verifikasi tidak valid atau kedaluwarsa.');
+    }
+
+    const resetToken = randomBytes(32).toString('base64url');
+    const adminClient = this.adminClient();
+    const { error: storeError } = await adminClient
+      .from('password_reset_tokens')
+      .delete()
+      .eq('user_id', data.user.id)
+      .is('consumed_at', null);
+    if (storeError) this.throwProviderError(storeError, 'recovery-store');
+
+    const { error: insertError } = await adminClient
+      .from('password_reset_tokens')
+      .insert({
+        user_id: data.user.id,
+        token_hash: this.hashToken(resetToken),
+        expires_at: new Date(Date.now() + RESET_TOKEN_TTL_SECONDS * 1000).toISOString(),
+      });
+    if (insertError) this.throwProviderError(insertError, 'recovery-store');
+
+    return { reset_token: resetToken, expires_in: RESET_TOKEN_TTL_SECONDS };
+  }
+
+  async resetPassword(resetToken: string, newPassword: string) {
+    const adminClient = this.adminClient();
+    const now = new Date().toISOString();
+    const { data: tokenRecord, error: consumeError } = await adminClient
+      .from('password_reset_tokens')
+      .update({ consumed_at: now })
+      .eq('token_hash', this.hashToken(resetToken))
+      .is('consumed_at', null)
+      .gt('expires_at', now)
+      .select('user_id')
+      .maybeSingle();
+
+    if (consumeError) this.throwProviderError(consumeError, 'recovery-store');
+    if (!tokenRecord) {
+      throw new BadRequestException('Token reset tidak valid, kedaluwarsa, atau sudah dipakai.');
+    }
+
+    const { error } = await adminClient.auth.admin.updateUserById(tokenRecord.user_id, {
+      password: newPassword,
+    });
+    if (error) this.throwProviderError(error, 'password-update');
+
+    return { message: 'Password berhasil diubah. Silakan login kembali.' };
+  }
+
+  private publicClient(): SupabaseClient {
+    const url = this.config.get<string>('SUPABASE_URL');
+    const key = this.config.get<string>('SUPABASE_ANON_KEY');
+    if (!url || !key) {
+      throw new ServiceUnavailableException('Konfigurasi Supabase belum lengkap.');
+    }
+    return createClient(url, key, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+  }
+
+  private adminClient(): SupabaseClient {
+    const url = this.config.get<string>('SUPABASE_URL');
+    const serviceKey =
+      this.config.get<string>('SUPABASE_SECRET_KEY') ??
+      this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY');
+    if (!url || !serviceKey) {
+      throw new ServiceUnavailableException(
+        'Password reset memerlukan SUPABASE_SECRET_KEY di backend.',
+      );
+    }
+    return createClient(url, serviceKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+  }
+
+  private async authRequest(path: string, accessToken: string, init: RequestInit) {
+    const url = this.config.get<string>('SUPABASE_URL');
+    const key = this.config.get<string>('SUPABASE_ANON_KEY');
+    if (!url || !key) {
+      throw new ServiceUnavailableException('Konfigurasi Supabase belum lengkap.');
+    }
+    try {
+      return await fetch(`${url.replace(/\/$/, '')}/auth/v1${path}`, {
+        ...init,
         headers: {
           apikey: key,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
-          ...(options.accessToken
-            ? { Authorization: `Bearer ${options.accessToken}` }
-            : {}),
+          ...init.headers,
         },
-        ...(options.body ? { body: options.body } : {}),
       });
     } catch {
-      throw new ServiceUnavailableException('Authentication service is temporarily unavailable.');
+      throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
     }
+  }
 
-    const text = await response.text();
-    let payload: unknown = null;
-    if (text) {
-      try {
-        payload = JSON.parse(text) as unknown;
-      } catch {
-        throw new BadGatewayException('Authentication service returned an invalid response.');
-      }
-    }
+  toPublicUser(user: User | null) {
+    if (!user) throw new ServiceUnavailableException('Supabase tidak mengembalikan data user.');
+    const name = user.user_metadata?.name ?? user.user_metadata?.full_name ?? null;
+    return {
+      id: user.id,
+      name,
+      email: user.email ?? null,
+      role: user.app_metadata?.role ?? 'user',
+      created_at: user.created_at,
+    };
+  }
 
-    if (!response.ok) {
-      const error = (payload ?? {}) as SupabaseErrorBody;
-      const detail = error.message ?? error.msg ?? error.error_description ?? '';
-      if (response.status === 401 && !options.accessToken) {
-        throw new ServiceUnavailableException(
-          'Supabase rejected the configured API key. Check that SUPABASE_PUBLISHABLE_KEY belongs to the configured project.',
-        );
-      }
-      if (
-        response.status === 401 ||
-        response.status === 403 ||
-        /invalid login credentials|invalid grant/i.test(detail)
-      ) {
-        throw new UnauthorizedException(detail || 'Invalid credentials or access token.');
-      }
-      if (response.status === 429) {
-        throw new HttpException(
-          detail || 'Too many authentication attempts. Try again later.',
-          429,
-        );
-      }
-      if (response.status === 400 || response.status === 409) {
-        throw new HttpException(detail || 'Authentication request could not be completed.', response.status);
-      }
-      if (response.status >= 500) {
-        throw new ServiceUnavailableException('Authentication service is temporarily unavailable.');
-      }
-      throw new HttpException(detail || 'Authentication request failed.', response.status);
+  private normalizeEmail(email: string) {
+    return email.trim().toLowerCase();
+  }
+
+  private hashToken(token: string) {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private throwProviderError(
+    error: { status?: number; code?: string; message?: string },
+    operation: string,
+  ): never {
+    const code = error.code?.toLowerCase();
+    this.logger.warn(`Supabase auth operation failed (${operation}; status=${error.status ?? 'unknown'}; code=${code ?? 'unknown'})`);
+
+    if (code === 'email_exists' || code === 'user_already_exists') {
+      throw new ConflictException({
+        code: 'EMAIL_ALREADY_REGISTERED',
+        message: 'Email sudah terdaftar.',
+      });
     }
-    return payload as T;
+    if (code === 'email_address_invalid') {
+      throw new UnprocessableEntityException({
+        code: 'VALIDATION_ERROR',
+        message: 'Gunakan alamat email sungguhan. Domain contoh seperti example.com tidak didukung Supabase.',
+      });
+    }
+    if (error.status === 429) {
+      throw new HttpException('Terlalu banyak percobaan. Coba lagi nanti.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    if (code === 'weak_password' || code === 'password_too_short') {
+      throw new UnprocessableEntityException({
+        code: 'VALIDATION_ERROR',
+        message: 'Password belum memenuhi kebijakan keamanan Supabase. Gunakan password yang lebih kuat.',
+      });
+    }
+    if (error.status && error.status >= 500) {
+      throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
+    }
+    if (operation === 'register') {
+      throw new BadRequestException({
+        code: 'INVALID_REQUEST',
+        message: 'Supabase menolak pendaftaran. Periksa kebijakan password dan konfigurasi Auth.',
+      });
+    }
+    throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
   }
 }
