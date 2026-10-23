@@ -63,6 +63,19 @@ where id = 'AUTH_USER_UUID';
 
 Akun tersebut harus masuk kembali agar memperoleh token dengan peran barunya. `POST /api/v1/superadmin/admins` mengaitkan akun Auth yang sudah ada berdasarkan email. Karena SMTP sengaja belum diaktifkan, endpoint ini tidak mengirim undangan. Endpoint ini menetapkan `app_metadata.role` tepercaya pada akun dan membuat keanggotaan sekolahnya.
 
+## API belajar
+
+Endpoint berikut memerlukan Bearer token untuk akun pembelajar:
+
+- `GET /api/v1/dashboard`
+- `GET /api/v1/missions`
+- `GET /api/v1/sketch/templates` dan `GET /api/v1/sketch/submissions`
+- `GET /api/v1/explore/activities`, `GET /api/v1/explore/questions`, dan `POST /api/v1/explore/attempts`
+- `GET /api/v1/stories` dan `GET /api/v1/stories/:story_id`
+- `GET /api/v1/history` dan `GET /api/v1/progress/summary`
+
+Data misi, template, soal, kiriman, dan cerita dibaca dari tabel Supabase; daftar akan kosong jika datanya belum dimasukkan. Jawaban benar soal Explore tidak disertakan saat mengambil soal dan poin dihitung server saat jawaban dikirim. Upload gambar untuk Sketch Challenge dan pembuatan cerita dengan AI belum tersedia karena integrasi Storage dan layanan AI belum dibuat.
+
 ## Konvensi API
 
 - DTO request menggunakan validation pipe global: field yang tidak dikenal akan ditolak dan nilai diubah sesuai tipe yang dideklarasikan.

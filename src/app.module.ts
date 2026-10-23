@@ -5,6 +5,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
 import { HealthController } from './health/health.controller.js';
+import { LearningModule } from './learning/learning.module.js';
 import { SchoolsModule } from './schools/schools.module.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
@@ -17,6 +18,7 @@ const observeEnabled = Boolean(
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     AuthModule,
+    LearningModule,
     SchoolsModule,
     ...(observeEnabled
       ? [
