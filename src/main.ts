@@ -1,5 +1,6 @@
 import { UnprocessableEntityException, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule, ObserveInstrument } from './app.module.js';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter.js';
 import { requestIdMiddleware } from './common/middleware/request-id.middleware.js';
@@ -32,6 +33,17 @@ async function bootstrap() {
         ),
     }),
   );
+
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('SKETCHOO API')
+    .setDescription(
+      'REST API untuk platform pembelajaran interaktif SKETCHOO.',
+    )
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+  const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('docs', app, swaggerDocument);
 
   await app.listen(Number(process.env.PORT ?? 3000), '0.0.0.0');
 }
