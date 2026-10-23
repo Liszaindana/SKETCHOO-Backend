@@ -1,114 +1,77 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Backend SKETCHOO
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+REST API berbasis NestJS untuk aplikasi SKETCHOO. NestJS menangani autentikasi, otorisasi, data aplikasi, dan orkestrasi. Layanan FastAPI yang terpisah dikhususkan untuk kebutuhan machine learning.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Persiapan lokal
 
-## Description
+1. Pasang dependensi dengan `npm install`.
+2. Salin `.env.example` menjadi `.env`, lalu isi nilai konfigurasi proyek Supabase.
+3. Terapkan SQL di `supabase/migrations/` ke proyek Supabase.
+4. Jalankan API dengan `npm run start:dev`.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+Prefix API berversi secara default adalah `/api/v1`. Endpoint kesehatan adalah `GET /health` dan tidak memerlukan autentikasi. Telemetri Observe dinonaktifkan kecuali `OBSERVE_APP_KEY` dan `OBSERVE_APP_SECRET` sudah dikonfigurasi.
 
-## Project setup
+## Autentikasi
 
-```bash
-$ npm install
+NestJS menyerahkan pengelolaan kata sandi dan sesi kepada Supabase Auth. Rute yang sudah tersedia:
+
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/logout`
+- `POST /api/v1/auth/forgot-password`
+- `POST /api/v1/auth/verify-reset-code`
+- `POST /api/v1/auth/reset-password`
+- `GET` dan `PATCH /api/v1/users/me`
+
+Reset kata sandi menggunakan OTP pemulihan dari Supabase, lalu token reset acak yang sudah di-hash dan hanya dapat digunakan sekali. Token disimpan di `password_reset_tokens`. Atur `SUPABASE_SECRET_KEY` atau `SUPABASE_SERVICE_ROLE_KEY` di berkas `.env` backend dan konfigurasi templat email pemulihan Supabase agar mengirim token enam digit. Simpan key dengan hak akses tinggi ini hanya di server; jangan pernah memasukkannya ke Flutter. Pembatas laju autentikasi saat ini menggunakan penyimpanan di dalam proses, jadi deployment produksi dengan beberapa instance memerlukan penyimpanan pembatas laju bersama.
+
+## Fondasi Sekolah dan Smartboard
+
+Terapkan migration sesuai urutan nama berkas. Migration tersebut membuat tabel token reset kata sandi sekali pakai, data sekolah dan keanggotaan, kelas, profil siswa, sesi dan peserta Smartboard, catatan aktivitas dan audit, serta fondasi data belajar untuk misi/progres, template dan kiriman sketsa, soal dan jawaban Explore, serta cerita. Kiriman belajar mendukung akun mandiri dan profil siswa dalam sesi Smartboard. RLS diaktifkan dan tidak ada kebijakan akses langsung untuk klien; key Supabase khusus server memperoleh hak akses tabel dan tidak pernah dikirim ke Flutter.
+
+Rute sekolah/admin yang sudah tersedia:
+
+- `GET /api/v1/admin/dashboard`
+- `GET|POST /api/v1/admin/classrooms`; `PATCH /api/v1/admin/classrooms/:classroom_id`
+- `GET|POST /api/v1/admin/students`; `GET|PATCH /api/v1/admin/students/:student_id`
+- `GET /api/v1/admin/students/:student_id/progress`
+- `GET /api/v1/admin/students/:student_id/history`
+- `GET|POST /api/v1/admin/sessions`; `GET /api/v1/admin/sessions/:session_id`
+- `POST /api/v1/admin/sessions/:session_id/participants`
+- `POST /api/v1/admin/sessions/:session_id/complete`
+
+Rute superadmin yang sudah tersedia:
+
+- `GET /api/v1/superadmin/dashboard`
+- `GET|POST /api/v1/superadmin/schools`; `GET|PATCH /api/v1/superadmin/schools/:school_id`
+- `GET|POST /api/v1/superadmin/admins`; `PATCH /api/v1/superadmin/admins/:admin_id`
+- `GET /api/v1/superadmin/audit-logs`
+
+Profil siswa terpisah dari akun Supabase Auth, sesuai alur Smartboard terpandu dalam spesifikasi. Admin harus memiliki `app_metadata.role = "admin"` dan satu baris aktif di `school_memberships`; API menentukan cakupan sekolah dari keanggotaan tersebut. Akses superadmin menggunakan `app_metadata.role = "superadmin"`. Pendaftaran publik tidak dapat menetapkan peran-peran ini. Pembuatan admin mengaitkan akun Supabase Auth yang sudah ada dan menetapkan perannya; proses ini tidak mengirim email undangan selama SMTP belum dikonfigurasi.
+
+Untuk superadmin pertama, gunakan sesi administrasi Supabase tepercaya untuk menetapkan peran pada pengguna Auth yang dimaksud. Jangan sediakan endpoint publik untuk menaikkan hak akses akun. Perubahan sekolah, perubahan kelas/siswa/sesi, penetapan admin, dan perubahan peran dicatat di `audit_logs`. Migration fondasi data belajar menyiapkan skema untuk API dashboard, misi, sketsa, Explore, dan cerita; endpoint serta alur fitur tersebut masih tahap implementasi berikutnya.
+
+Contoh penyiapan awal untuk akun Auth yang sudah ada (ganti UUID, lalu jalankan satu kali di SQL Editor Supabase):
+
+```sql
+update auth.users
+set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb)
+  || '{"role":"superadmin"}'::jsonb
+where id = 'AUTH_USER_UUID';
 ```
 
-## Compile and run the project
+Akun tersebut harus masuk kembali agar memperoleh token dengan peran barunya. `POST /api/v1/superadmin/admins` mengaitkan akun Auth yang sudah ada berdasarkan email. Karena SMTP sengaja belum diaktifkan, endpoint ini tidak mengirim undangan. Endpoint ini menetapkan `app_metadata.role` tepercaya pada akun dan membuat keanggotaan sekolahnya.
 
-```bash
-# development
-$ npm run start
+## Konvensi API
 
-# watch mode
-$ npm run start:dev
+- DTO request menggunakan validation pipe global: field yang tidak dikenal akan ditolak dan nilai diubah sesuai tipe yang dideklarasikan.
+- Format error menggunakan `{ "error": { "code", "message", "details", "request_id" } }`.
+- Setiap respons menyertakan header `x-request-id` untuk menghubungkan log dan kebutuhan dukungan.
+- Jangan commit `.env` atau menaruh Supabase service-role key di konfigurasi API publik/klien.
 
-# production mode
-$ npm run start:prod
-```
+## Perintah yang sering digunakan
 
-## Run tests
-
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
-```
-
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Observability
-
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- `npm run start:dev` — menjalankan server pengembangan dengan reload otomatis
+- `npm run build` — mengompilasi aplikasi
+- `npm run lint` — memeriksa lint pada source dan tes
