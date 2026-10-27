@@ -16,6 +16,12 @@ import type {
   SketchTemplateQueryDto,
   SubmitExploreAttemptDto,
 } from './dto/learner-query.dto.js';
+import {
+  DAILY_MISSION_COUNT,
+  missionDate,
+  missionDayStartIso,
+  selectDailyMissions,
+} from './mission-schedule.js';
 
 const EXPLORE_POINTS = 5;
 const EXPLORE_ACTIVITIES = [
@@ -57,6 +63,7 @@ export class LearningService {
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
     const todayIso = today.toISOString();
+    const missionDayStart = missionDayStartIso(missionDate());
     const db = this.supabase.getClient();
     const [sketches, attempts, stories, completedMissions, missionPage, points] =
       await Promise.all([
@@ -67,7 +74,7 @@ export class LearningService {
         db.from('stories').select('id', { count: 'exact', head: true })
           .eq('user_id', user.id).eq('status', 'completed').gte('created_at', todayIso),
         db.from('user_mission_progress').select('id', { count: 'exact', head: true })
-          .eq('user_id', user.id).eq('status', 'completed'),
+          .eq('user_id', user.id).eq('status', 'completed').gte('updated_at', missionDayStart),
         this.listMissions(user, { limit: 3 }),
         db.from('explore_attempts').select('points_awarded').eq('user_id', user.id),
       ]);
@@ -102,32 +109,40 @@ export class LearningService {
   async listMissions(user: AuthUser, query: MissionListQueryDto) {
     this.requireLearner(user);
     const db = this.supabase.getClient();
-    const pageSize = 100;
-    const limit = query.limit ?? 25;
-    let scanCursor = query.cursor;
-    let hasMoreRows = true;
-    const matches: Array<Record<string, unknown>> = [];
+    const limit = query.limit ?? DAILY_MISSION_COUNT;
+    const date = missionDate();
+    const dayStart = missionDayStartIso(date);
 
-    while (hasMoreRows && matches.length <= limit) {
-      let request = db.from('missions')
-        .select('id, title, description, activity_type, target_count, reward_points, icon_key, sort_order')
-        .eq('is_active', true)
-        .order('id', { ascending: true })
-        .limit(pageSize);
-      if (scanCursor) request = request.gt('id', scanCursor);
-      const { data, error } = await request;
-      this.throwOnError(error, 'mission-list');
-      const rows = data ?? [];
-      if (!rows.length) break;
-      const ids = rows.map((row) => row.id);
+    // Daftar misi adalah konten kurasi berukuran kecil, jadi diambil sekaligus
+    // lalu dipecah menjadi set harian sesuai `sort_order`.
+    const { data, error } = await db
+      .from('missions')
+      .select('id, title, description, activity_type, target_count, reward_points, icon_key, sort_order')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true })
+      .order('id', { ascending: true })
+      .limit(200);
+    this.throwOnError(error, 'mission-list');
+
+    const daily = selectDailyMissions(data ?? [], date).slice(0, limit);
+    const progress = new Map<string, { progress_count?: number; status?: string; completed_at?: string | null }>();
+    if (daily.length) {
+      // Hanya progres hari ini yang dihitung; misi otomatis "reset" tiap hari.
       const { data: progressRows, error: progressError } = await db.from('user_mission_progress')
         .select('mission_id, progress_count, status, completed_at')
-        .eq('user_id', user.id).in('mission_id', ids);
+        .eq('user_id', user.id)
+        .in('mission_id', daily.map((mission) => mission.id))
+        .gte('updated_at', dayStart);
       this.throwOnError(progressError, 'mission-progress-list');
-      const progress = new Map((progressRows ?? []).map((row) => [row.mission_id, row]));
-      for (const mission of rows) {
+      for (const row of progressRows ?? []) {
+        progress.set(row.mission_id as string, row);
+      }
+    }
+
+    const items = daily
+      .map((mission) => {
         const saved = progress.get(mission.id);
-        const item = {
+        return {
           id: mission.id,
           title: mission.title,
           description: mission.description,
@@ -139,15 +154,10 @@ export class LearningService {
           icon_key: mission.icon_key,
           completed_at: saved?.completed_at ?? null,
         };
-        if (!query.status || item.status === query.status) matches.push(item);
-      }
-      scanCursor = rows.at(-1)?.id;
-      hasMoreRows = rows.length === pageSize;
-    }
+      })
+      .filter((item) => !query.status || item.status === query.status);
 
-    const hasMore = matches.length > limit;
-    const items = hasMore ? matches.slice(0, limit) : matches;
-    return { items, next_cursor: hasMore ? items.at(-1)?.id ?? null : null };
+    return { items, mission_date: date, next_cursor: null };
   }
 
   async listSketchTemplates(user: AuthUser, query: SketchTemplateQueryDto) {
@@ -284,11 +294,12 @@ export class LearningService {
     this.requireLearner(user);
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
+    const missionDayStart = missionDayStartIso(missionDate());
     const [sketchCount, storyCount, completedMissions, points] = await Promise.all([
       this.countSketches(user.id),
       this.countStories(user.id),
       this.supabase.getClient().from('user_mission_progress').select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id).eq('status', 'completed'),
+        .eq('user_id', user.id).eq('status', 'completed').gte('updated_at', missionDayStart),
       this.supabase.getClient().from('explore_attempts').select('points_awarded').eq('user_id', user.id),
     ]);
     this.throwOnError(completedMissions.error, 'progress-mission-count');

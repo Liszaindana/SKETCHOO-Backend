@@ -16,6 +16,7 @@ Prefix API berversi secara default adalah `/api/v1`. Endpoint kesehatan adalah `
 NestJS menyerahkan pengelolaan kata sandi dan sesi kepada Supabase Auth. Rute yang sudah tersedia:
 
 - `POST /api/v1/auth/register`
+- `POST /api/v1/auth/resend-verification`
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/refresh`
 - `POST /api/v1/auth/logout`
@@ -23,6 +24,8 @@ NestJS menyerahkan pengelolaan kata sandi dan sesi kepada Supabase Auth. Rute ya
 - `POST /api/v1/auth/verify-reset-code`
 - `POST /api/v1/auth/reset-password`
 - `GET` dan `PATCH /api/v1/users/me`
+
+Saat konfirmasi email aktif di Supabase, `register` membalas `requires_email_confirmation: true` tanpa sesi, dan `login` menolak akun yang belum diverifikasi dengan `403 EMAIL_NOT_CONFIRMED`. `resend-verification` mengirim ulang tautan verifikasi dan sengaja membalas pesan generik agar status akun tidak bocor. Atur `SUPABASE_CONFIRM_REDIRECT_URL` untuk tujuan redirect setelah tautan verifikasi diklik.
 
 Reset kata sandi menggunakan OTP pemulihan dari Supabase, lalu token reset acak yang sudah di-hash dan hanya dapat digunakan sekali. Token disimpan di `password_reset_tokens`. Atur `SUPABASE_SECRET_KEY` atau `SUPABASE_SERVICE_ROLE_KEY` di berkas `.env` backend dan konfigurasi templat email pemulihan Supabase agar mengirim token enam digit. Simpan key dengan hak akses tinggi ini hanya di server; jangan pernah memasukkannya ke Flutter. Pembatas laju autentikasi saat ini menggunakan penyimpanan di dalam proses, jadi deployment produksi dengan beberapa instance memerlukan penyimpanan pembatas laju bersama.
 
@@ -74,7 +77,7 @@ Endpoint berikut memerlukan Bearer token untuk akun pembelajar:
 - `GET /api/v1/stories` dan `GET /api/v1/stories/:story_id`
 - `GET /api/v1/history` dan `GET /api/v1/progress/summary`
 
-Data misi, template, soal, kiriman, dan cerita dibaca dari tabel Supabase; daftar akan kosong jika datanya belum dimasukkan. Jawaban benar soal Explore tidak disertakan saat mengambil soal dan poin dihitung server saat jawaban dikirim. Upload gambar untuk Sketch Challenge dan pembuatan cerita dengan AI belum tersedia karena integrasi Storage dan layanan AI belum dibuat.
+Data misi, template, soal, kiriman, dan cerita dibaca dari tabel Supabase; daftar akan kosong jika datanya belum dimasukkan. `GET /api/v1/missions` menampilkan **4 misi harian**: daftar misi aktif diurutkan berdasarkan `sort_order` lalu dipecah per 4 misi, dan set yang tampil dipilih dari tanggal sehingga berganti setiap hari serta berulang setelah semua set terpakai (contoh: 12 misi = 3 set = ulang tiap 3 hari). Batas hari memakai zona `Asia/Jakarta`. Progres hanya dihitung bila `user_mission_progress.updated_at` jatuh pada hari berjalan, jadi reset harian tidak butuh cron atau penghapusan data; penulis progres wajib memperbarui `updated_at` dan mengulang `progress_count`/`status` bila baris berasal dari hari sebelumnya. Contoh 12 misi ada di `supabase/migrations/202610260001_seed_missions.sql` (idempoten) dan dapat diterapkan lewat `node scripts/seed-missions.mjs`. Jawaban benar soal Explore tidak disertakan saat mengambil soal dan poin dihitung server saat jawaban dikirim. Upload gambar untuk Sketch Challenge dan pembuatan cerita dengan AI belum tersedia karena integrasi Storage dan layanan AI belum dibuat.
 
 ## Konvensi API
 

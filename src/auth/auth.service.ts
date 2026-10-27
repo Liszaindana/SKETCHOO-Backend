@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -46,7 +47,37 @@ export class AuthService {
 
     return {
       user: this.toPublicUser(data.user),
-      message: 'Akun berhasil dibuat. Silakan masuk.',
+      requires_email_confirmation: !data.session,
+      access_token: data.session?.access_token ?? null,
+      message: data.session
+        ? 'Akun berhasil dibuat.'
+        : 'Akun berhasil dibuat. Cek email untuk verifikasi, lalu masuk.',
+    };
+  }
+
+  async resendVerification(email: string) {
+    const redirectTo =
+      this.config.get<string>('SUPABASE_CONFIRM_REDIRECT_URL') ??
+      this.config.get<string>('SUPABASE_RESET_REDIRECT_URL');
+    const { error } = await this.publicClient().auth.resend({
+      type: 'signup',
+      email: this.normalizeEmail(email),
+      options: redirectTo ? { emailRedirectTo: redirectTo } : undefined,
+    });
+
+    if (error?.status === 429) {
+      throw new HttpException(
+        'Terlalu banyak percobaan. Coba lagi nanti.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    if (error?.status && error.status >= 500) {
+      throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
+    }
+
+    // Jangan bocorkan status akun: respons tetap sama untuk email terdaftar maupun tidak.
+    return {
+      message: 'Jika email terdaftar dan belum diverifikasi, tautan verifikasi sudah dikirim ulang.',
     };
   }
 
@@ -60,6 +91,13 @@ export class AuthService {
     }
     if (error?.status && error.status >= 500) {
       throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
+    }
+    if (error?.code === 'email_not_confirmed' ||
+        /email not confirmed/i.test(error?.message ?? '')) {
+      throw new ForbiddenException({
+        code: 'EMAIL_NOT_CONFIRMED',
+        message: 'Email belum diverifikasi. Cek inbox dan klik tautan verifikasi, lalu masuk kembali.',
+      });
     }
     if (error || !data.session || !data.user) {
       throw new UnauthorizedException('Email atau password salah.');

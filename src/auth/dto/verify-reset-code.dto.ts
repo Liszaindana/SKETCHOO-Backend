@@ -5,6 +5,6 @@ export class VerifyResetCodeDto {
   @MaxLength(254)
   email!: string;
 
-  @Matches(/^\d{6}$/)
+  @Matches(/^\d{4,6}$/)
   code!: string;
 }

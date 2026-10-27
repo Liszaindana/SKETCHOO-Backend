@@ -14,6 +14,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RefreshDto } from './dto/refresh.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
+import { ResendVerificationDto } from './dto/resend-verification.dto.js';
 import { ResetPasswordDto } from './dto/reset-password.dto.js';
 import { VerifyResetCodeDto } from './dto/verify-reset-code.dto.js';
 import type { AuthenticatedRequest } from './auth.types.js';
@@ -41,6 +42,13 @@ export class AuthController {
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   refresh(@Body() body: RefreshDto) {
     return this.authService.refresh(body.refresh_token);
+  }
+
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  resendVerification(@Body() body: ResendVerificationDto) {
+    return this.authService.resendVerification(body.email);
   }
 
   @Post('logout')
