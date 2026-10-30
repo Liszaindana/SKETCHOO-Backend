@@ -13,6 +13,7 @@ import { CurrentUser } from '../auth/current-user.decorator.js';
 import { SupabaseAuthGuard } from '../auth/auth.guard.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import {
+  CompleteSketchChallengeDto,
   CursorPageQueryDto,
   ExploreQuestionQueryDto,
   HistoryQueryDto,
@@ -51,6 +52,20 @@ export class LearningController {
     @Query() query: CursorPageQueryDto,
   ) {
     return this.learning.listSketchSubmissions(user, query);
+  }
+
+  @Get('sketch-challenge/levels')
+  sketchChallengeLevels(@CurrentUser() user: AuthUser) {
+    return this.learning.listSketchChallengeLevels(user);
+  }
+
+  @Post('sketch-challenge/complete')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  completeSketchChallenge(
+    @CurrentUser() user: AuthUser,
+    @Body() body: CompleteSketchChallengeDto,
+  ) {
+    return this.learning.completeSketchChallenge(user, body);
   }
 
   @Get('explore/activities')

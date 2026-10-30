@@ -72,3 +72,30 @@ export class SubmitExploreAttemptDto {
   @MaxLength(128)
   answer!: string;
 }
+
+export class CompleteSketchChallengeDto {
+  @IsString()
+  @MaxLength(80)
+  level_id!: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  stroke_count!: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  total_points!: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  duration_seconds!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  artwork_image_url?: string;
+}
+

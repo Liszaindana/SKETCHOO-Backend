@@ -82,11 +82,21 @@ export class AuthService {
   }
 
   async login(email: string, password: string) {
+    const startedAt = performance.now();
+    const normalizedEmail = this.normalizeEmail(email);
+    this.logger.log(`[AUTH] login start email=${this.maskEmail(normalizedEmail)}`);
+
+    // Supabase Auth melakukan user lookup, bcrypt, dan JWT signing di provider.
+    // Backend tidak menerima password hash dan tidak mengakses tabel auth.users langsung.
+    const providerStartedAt = performance.now();
     const { data, error } = await this.publicClient().auth.signInWithPassword({
-      email: this.normalizeEmail(email),
+      email: normalizedEmail,
       password,
     });
+    const providerDuration = Math.round(performance.now() - providerStartedAt);
+    this.logger.log(`[AUTH] provider lookup+bcrypt+jwt duration=${providerDuration}ms`);
     if (error?.status === 429) {
+      this.logger.warn(`[AUTH] login failed status=429 total=${Math.round(performance.now() - startedAt)}ms`);
       throw new HttpException('Terlalu banyak percobaan. Coba lagi nanti.', HttpStatus.TOO_MANY_REQUESTS);
     }
     if (error?.status && error.status >= 500) {
@@ -100,9 +110,12 @@ export class AuthService {
       });
     }
     if (error || !data.session || !data.user) {
+      this.logger.warn(`[AUTH] login failed status=401 total=${Math.round(performance.now() - startedAt)}ms`);
       throw new UnauthorizedException('Email atau password salah.');
     }
 
+    const totalDuration = Math.round(performance.now() - startedAt);
+    this.logger.log(`[AUTH] login total duration=${totalDuration}ms response status=200`);
     return {
       user: this.toPublicUser(data.user),
       access_token: data.session.access_token,
@@ -328,6 +341,12 @@ export class AuthService {
 
   private normalizeEmail(email: string) {
     return email.trim().toLowerCase();
+  }
+
+  private maskEmail(email: string) {
+    const [local, domain] = email.split('@');
+    if (!domain) return '<invalid>';
+    return `${local.slice(0, 2)}***@${domain}`;
   }
 
   private hashToken(token: string) {

@@ -1,4 +1,5 @@
 import { UnprocessableEntityException, ValidationPipe } from '@nestjs/common';
+import type { NextFunction, Request, Response } from 'express';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule, ObserveInstrument } from './app.module.js';
@@ -19,6 +20,32 @@ async function bootstrap() {
     exclude: ['health'],
   });
   app.enableShutdownHooks();
+  app.enableCors({
+    origin: corsOrigins(),
+    credentials: true,
+  });
+  app.use((request: Request, response: Response, next: NextFunction) => {
+    const origin = request.headers.origin;
+    if (origin) {
+      response.header('Access-Control-Allow-Origin', origin);
+      response.header('Access-Control-Allow-Credentials', 'true');
+      response.header(
+        'Access-Control-Allow-Headers',
+        request.headers['access-control-request-headers'] ??
+            'Content-Type, Authorization',
+      );
+      response.header(
+        'Access-Control-Allow-Methods',
+        'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+      );
+      response.header('Vary', 'Origin, Access-Control-Request-Headers');
+    }
+    if (request.method === 'OPTIONS') {
+      response.sendStatus(204);
+      return;
+    }
+    next();
+  });
   app.use(requestIdMiddleware);
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalPipes(
@@ -46,6 +73,14 @@ async function bootstrap() {
   SwaggerModule.setup('docs', app, swaggerDocument);
 
   await app.listen(Number(process.env.PORT ?? 3000), '0.0.0.0');
+}
+
+function corsOrigins(): true | string[] {
+  const configured = process.env.CORS_ORIGINS
+    ?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return configured?.length ? configured : true;
 }
 
 function validateEnvironment() {

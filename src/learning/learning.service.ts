@@ -9,6 +9,7 @@ import {
 import type { AuthUser } from '../auth/auth.types.js';
 import { SupabaseAdminService } from '../common/supabase/supabase-admin.service.js';
 import type {
+  CompleteSketchChallengeDto,
   CursorPageQueryDto,
   ExploreQuestionQueryDto,
   HistoryQueryDto,
@@ -16,6 +17,7 @@ import type {
   SketchTemplateQueryDto,
   SubmitExploreAttemptDto,
 } from './dto/learner-query.dto.js';
+import { calculateSketchReward } from './sketch-reward.js';
 import {
   DAILY_MISSION_COUNT,
   missionDate,
@@ -416,6 +418,169 @@ export class LearningService {
     const name = user.user_metadata?.name ?? user.user_metadata?.full_name;
     if (typeof name === 'string' && name.trim()) return name.trim();
     return user.email?.split('@')[0] ?? 'Teman';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sketch Challenge
+  // ---------------------------------------------------------------------------
+
+  /** Urutan level canonical; juga dipakai untuk fallback in-memory. */
+  private static readonly SKETCH_LEVELS = [
+    { id: 'bebek',     level_number: 1, title: 'Bebek',     subtitle: '+20 Bintang' },
+    { id: 'kucing',    level_number: 2, title: 'Kucing',    subtitle: '+20 Bintang' },
+    { id: 'ikan',      level_number: 3, title: 'Ikan',      subtitle: '+20 Bintang' },
+    { id: 'kupu_kupu', level_number: 4, title: 'Kupu-Kupu', subtitle: '+20 Bintang' },
+    { id: 'kura_kura', level_number: 5, title: 'Kura-Kura', subtitle: '+20 Bintang' },
+  ] as const;
+
+  async listSketchChallengeLevels(user: AuthUser) {
+    this.requireLearner(user);
+    const db = this.supabase.getClient();
+
+    // Ambil data level dan progres user sekaligus
+    const [levelsRes, progressRes] = await Promise.all([
+      db.from('sketch_challenge_levels')
+        .select('id, level_number, title, subtitle')
+        .eq('is_active', true)
+        .order('level_number', { ascending: true }),
+      db.from('user_sketch_challenge_progress')
+        .select('level_id, status, high_stars')
+        .eq('user_id', user.id),
+    ]);
+
+    // Tabel belum dibuat → gunakan fallback in-memory (sebelum migrasi dijalankan)
+    // ponytail: fallback ini mati otomatis begitu migrasi Supabase dijalankan
+    const levels =
+      levelsRes.error
+        ? ([...LearningService.SKETCH_LEVELS] as Array<{ id: string; level_number: number; title: string; subtitle: string }>)
+        : (levelsRes.data ?? []);
+
+    const progressMap = new Map<string, { status: string; high_stars: number }>();
+    if (!progressRes.error) {
+      for (const row of progressRes.data ?? []) {
+        progressMap.set(row.level_id, { status: row.status, high_stars: row.high_stars });
+      }
+    }
+
+    // Level pertama default active kalau user belum punya record progres sama sekali
+    const hasAnyProgress = progressMap.size > 0;
+
+    return {
+      levels: levels.map((lv, idx) => {
+        const prog = progressMap.get(lv.id);
+        let status: string;
+        if (prog) {
+          status = prog.status;
+        } else if (!hasAnyProgress && idx === 0) {
+          status = 'active';
+        } else {
+          status = 'locked';
+        }
+        return {
+          id: lv.id,
+          level_number: lv.level_number,
+          title: lv.title,
+          subtitle: lv.subtitle,
+          status,
+          high_stars: prog?.high_stars ?? 0,
+        };
+      }),
+    };
+  }
+
+  async completeSketchChallenge(user: AuthUser, input: CompleteSketchChallengeDto) {
+    this.requireLearner(user);
+    const db = this.supabase.getClient();
+
+    // Validasi level ada
+    const levels = [...LearningService.SKETCH_LEVELS];
+    const currentIdx = levels.findIndex((l) => l.id === input.level_id);
+    if (currentIdx === -1) throw new BadRequestException(`level_id '${input.level_id}' tidak valid.`);
+
+    const reward = calculateSketchReward(input.stroke_count, input.total_points, input.duration_seconds);
+
+    // Total bintang user saat ini dari semua aktivitas explore
+    const { data: pointsRows } = await db
+      .from('explore_attempts').select('points_awarded').eq('user_id', user.id);
+    const existingPoints = (pointsRows ?? []).reduce((s, r) => s + (r.points_awarded ?? 0), 0);
+    const totalStars = existingPoints + reward.score;
+
+    // Unlock level berikutnya (minimal 1 bintang = selalu unlock)
+    const nextLevel = levels[currentIdx + 1] ?? null;
+
+    // Upsert progres level saat ini
+    const existingProg = await db
+      .from('user_sketch_challenge_progress')
+      .select('high_stars, high_score, attempts_count')
+      .eq('user_id', user.id)
+      .eq('level_id', input.level_id)
+      .maybeSingle();
+
+    const prevHighStars = existingProg.data?.high_stars ?? 0;
+    const prevHighScore = existingProg.data?.high_score ?? 0;
+    const prevAttempts = existingProg.data?.attempts_count ?? 0;
+
+    const newHighStars = Math.max(prevHighStars, reward.stars) as 1 | 2 | 3;
+    const newHighScore = Math.max(prevHighScore, reward.score);
+
+    // Operasi DB — jika tabel belum ada (migrasi belum dijalankan), log saja tidak throw
+    const upsertCurrentProg = db.from('user_sketch_challenge_progress').upsert({
+      user_id: user.id,
+      level_id: input.level_id,
+      status: 'completed',
+      high_stars: newHighStars,
+      high_score: newHighScore,
+      attempts_count: prevAttempts + 1,
+      last_artwork_url: input.artwork_image_url ?? null,
+      completed_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,level_id' });
+
+    const insertSubmission = db.from('sketch_challenge_submissions').insert({
+      user_id: user.id,
+      level_id: input.level_id,
+      stroke_count: input.stroke_count,
+      total_points: input.total_points,
+      duration_seconds: input.duration_seconds,
+      stars_earned: reward.stars,
+      score_awarded: reward.score,
+      artwork_image_url: input.artwork_image_url ?? null,
+      feedback_message: reward.feedback,
+    });
+
+    // Unlock level berikutnya kalau belum ada record
+    // Operasi DB — jika tabel belum ada (migrasi belum dijalankan), log saja tidak throw
+    const [r1, r2] = await Promise.all([
+      upsertCurrentProg.then((r) => r),
+      insertSubmission.then((r) => r),
+    ]);
+    for (const r of [r1, r2] as Array<{ error?: { message?: string } }>) {
+      if (r?.error) this.logger.warn(`sketch-challenge-complete: ${r.error.message}`);
+    }
+
+    if (nextLevel) {
+      const r3 = await db.from('user_sketch_challenge_progress').upsert({
+        user_id: user.id,
+        level_id: nextLevel.id,
+        status: 'active',
+        high_stars: 0,
+        high_score: 0,
+        attempts_count: 0,
+        last_artwork_url: null,
+        completed_at: null,
+      }, { onConflict: 'user_id,level_id', ignoreDuplicates: true });
+      if ((r3 as { error?: { message?: string } }).error) {
+        this.logger.warn(`sketch-challenge-unlock: ${(r3 as { error?: { message?: string } }).error?.message}`);
+      }
+    }
+
+    return {
+      success: true,
+      stars_earned: reward.stars,
+      score_added: reward.score,
+      total_stars: totalStars,
+      unlocked_level_id: nextLevel?.id ?? null,
+      feedback_message: reward.feedback,
+    };
   }
 
   private requireLearner(user: AuthUser) {
