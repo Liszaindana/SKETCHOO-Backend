@@ -47,6 +47,14 @@ create table if not exists public.sketch_challenge_submissions (
 create index if not exists sketch_challenge_submissions_user_level_idx
   on public.sketch_challenge_submissions (user_id, level_id, created_at desc);
 
+alter table public.sketch_challenge_levels enable row level security;
+alter table public.user_sketch_challenge_progress enable row level security;
+alter table public.sketch_challenge_submissions enable row level security;
+
+grant all on public.sketch_challenge_levels,
+  public.user_sketch_challenge_progress,
+  public.sketch_challenge_submissions to service_role;
+
 -- Seed level hewan (asset lokal FE: assets/sketch challenge/hewan/)
 insert into public.sketch_challenge_levels (id, level_number, title, subtitle, is_active)
 values
