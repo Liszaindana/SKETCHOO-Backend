@@ -523,7 +523,7 @@ export class LearningService {
     const newHighStars = Math.max(prevHighStars, reward.stars) as 1 | 2 | 3;
     const newHighScore = Math.max(prevHighScore, reward.score);
 
-    // Operasi DB — jika tabel belum ada (migrasi belum dijalankan), log saja tidak throw
+    // Progress wajib tersimpan sebelum response sukses dikirim.
     const upsertCurrentProg = db.from('user_sketch_challenge_progress').upsert({
       user_id: user.id,
       level_id: input.level_id,
@@ -547,14 +547,19 @@ export class LearningService {
       feedback_message: reward.feedback,
     });
 
-    // Unlock level berikutnya kalau belum ada record
-    // Operasi DB — jika tabel belum ada (migrasi belum dijalankan), log saja tidak throw
+    // Unlock level berikutnya kalau belum ada record.
     const [r1, r2] = await Promise.all([
       upsertCurrentProg.then((r) => r),
       insertSubmission.then((r) => r),
     ]);
-    for (const r of [r1, r2] as Array<{ error?: { message?: string } }>) {
-      if (r?.error) this.logger.warn(`sketch-challenge-complete: ${r.error.message}`);
+    for (const [operation, result] of [
+      ['progress-save', r1],
+      ['submission-save', r2],
+    ] as const) {
+      if (result.error) {
+        this.logger.error(`[SKETCH] ${operation} failed: ${result.error.message}`);
+        throw new ServiceUnavailableException('Hasil gambar belum tersimpan. Coba lagi.');
+      }
     }
 
     if (nextLevel) {
