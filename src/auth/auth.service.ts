@@ -11,14 +11,18 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import nodemailer, { type Transporter } from 'nodemailer';
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 
 const RESET_TOKEN_TTL_SECONDS = 300;
+const RESET_CODE_TTL_SECONDS = 600;
+const RESET_CODE_MAX_ATTEMPTS = 5;
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private brevoTransporter?: Transporter;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -197,18 +201,47 @@ export class AuthService {
   }
 
   async forgotPassword(email: string) {
-    const redirectTo = this.config.get<string>('SUPABASE_RESET_REDIRECT_URL');
-    const { error } = await this.publicClient().auth.resetPasswordForEmail(
-      this.normalizeEmail(email),
-      redirectTo ? { redirectTo } : undefined,
-    );
-    if (error) {
-      if (error.status === 429) {
-        throw new HttpException('Terlalu banyak percobaan. Coba lagi nanti.', HttpStatus.TOO_MANY_REQUESTS);
-      }
-      if (error.status && error.status >= 500) {
-        throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
-      }
+    const normalizedEmail = this.normalizeEmail(email);
+    const adminClient = this.adminClient();
+    const { data: userId, error } = await adminClient.rpc('find_auth_user_id_by_email', {
+      p_email: normalizedEmail,
+    });
+
+    // Keep the response indistinguishable when the account does not exist.
+    if (error) this.throwProviderError(error, 'recovery-user-lookup');
+    if (!userId) {
+      return { message: 'Jika email terdaftar, kode verifikasi akan dikirim.' };
+    }
+
+    const code = randomInt(0, 10_000).toString().padStart(4, '0');
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + RESET_CODE_TTL_SECONDS * 1000).toISOString();
+    const { error: removeError } = await adminClient
+      .from('password_reset_codes')
+      .delete()
+      .eq('user_id', userId)
+      .is('consumed_at', null);
+    if (removeError) this.throwProviderError(removeError, 'recovery-code-store');
+
+    const { data: codeRecord, error: insertError } = await adminClient
+      .from('password_reset_codes')
+      .insert({
+        user_id: userId,
+        code_hash: this.hashResetCode(userId, code),
+        expires_at: expiresAt,
+      })
+      .select('id')
+      .single();
+    if (insertError || !codeRecord) {
+      if (insertError) this.throwProviderError(insertError, 'recovery-code-store');
+      throw new ServiceUnavailableException('Kode reset tidak dapat dibuat saat ini.');
+    }
+
+    try {
+      await this.sendResetCode(normalizedEmail, code);
+    } catch {
+      await adminClient.from('password_reset_codes').delete().eq('id', codeRecord.id);
+      throw new ServiceUnavailableException('Email kode reset tidak dapat dikirim saat ini.');
     }
 
     return {
@@ -217,28 +250,69 @@ export class AuthService {
   }
 
   async verifyResetCode(email: string, code: string) {
-    const { data, error } = await this.publicClient().auth.verifyOtp({
-      email: this.normalizeEmail(email),
-      token: code,
-      type: 'recovery',
+    const adminClient = this.adminClient();
+    const { data: userId, error: userError } = await adminClient.rpc('find_auth_user_id_by_email', {
+      p_email: this.normalizeEmail(email),
     });
-    if (error || !data.user) {
+    if (userError) this.throwProviderError(userError, 'recovery-user-lookup');
+    if (!userId) {
+      throw new BadRequestException('Kode verifikasi tidak valid atau kedaluwarsa.');
+    }
+
+    const now = new Date().toISOString();
+    const { data: codeRecord, error: lookupError } = await adminClient
+      .from('password_reset_codes')
+      .select('id, user_id, code_hash, attempts_count')
+      .eq('user_id', userId)
+      .is('consumed_at', null)
+      .gt('expires_at', now)
+      .lt('attempts_count', RESET_CODE_MAX_ATTEMPTS)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lookupError) this.throwProviderError(lookupError, 'recovery-code-lookup');
+    if (!codeRecord) {
+      throw new BadRequestException('Kode verifikasi tidak valid atau kedaluwarsa.');
+    }
+
+    const expectedHash = Buffer.from(this.hashResetCode(userId, code), 'hex');
+    const actualHash = Buffer.from(codeRecord.code_hash, 'hex');
+    const isValid = expectedHash.length === actualHash.length && timingSafeEqual(expectedHash, actualHash);
+    if (!isValid) {
+      const { error: attemptError } = await adminClient.rpc(
+        'increment_password_reset_code_attempt',
+        { p_code_id: codeRecord.id },
+      );
+      if (attemptError) this.throwProviderError(attemptError, 'recovery-code-attempt');
+      throw new BadRequestException('Kode verifikasi tidak valid atau kedaluwarsa.');
+    }
+
+    const { data: consumedCode, error: consumeCodeError } = await adminClient
+      .from('password_reset_codes')
+      .update({ consumed_at: now })
+      .eq('id', codeRecord.id)
+      .is('consumed_at', null)
+      .gt('expires_at', now)
+      .lt('attempts_count', RESET_CODE_MAX_ATTEMPTS)
+      .select('user_id')
+      .maybeSingle();
+    if (consumeCodeError) this.throwProviderError(consumeCodeError, 'recovery-code-consume');
+    if (!consumedCode) {
       throw new BadRequestException('Kode verifikasi tidak valid atau kedaluwarsa.');
     }
 
     const resetToken = randomBytes(32).toString('base64url');
-    const adminClient = this.adminClient();
     const { error: storeError } = await adminClient
       .from('password_reset_tokens')
       .delete()
-      .eq('user_id', data.user.id)
+      .eq('user_id', userId)
       .is('consumed_at', null);
     if (storeError) this.throwProviderError(storeError, 'recovery-store');
 
     const { error: insertError } = await adminClient
       .from('password_reset_tokens')
       .insert({
-        user_id: data.user.id,
+        user_id: userId,
         token_hash: this.hashToken(resetToken),
         expires_at: new Date(Date.now() + RESET_TOKEN_TTL_SECONDS * 1000).toISOString(),
       });
@@ -351,6 +425,46 @@ export class AuthService {
 
   private hashToken(token: string) {
     return createHash('sha256').update(token).digest('hex');
+  }
+
+  private hashResetCode(userId: string, code: string) {
+    const secret =
+      this.config.get<string>('RESET_CODE_PEPPER') ??
+      this.config.get<string>('SUPABASE_SECRET_KEY') ??
+      this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY');
+    if (!secret) {
+      throw new ServiceUnavailableException('Konfigurasi secret OTP belum lengkap.');
+    }
+    return createHmac('sha256', secret).update(`${userId}:${code}`).digest('hex');
+  }
+
+  private async sendResetCode(email: string, code: string) {
+    const senderEmail = this.config.get<string>('BREVO_SENDER_EMAIL');
+    const senderName = this.config.get<string>('BREVO_SENDER_NAME') ?? 'SKETCHOO';
+    const smtpLogin = this.config.get<string>('BREVO_SMTP_LOGIN');
+    const smtpKey = this.config.get<string>('BREVO_SMTP_KEY');
+    if (!senderEmail || !smtpLogin || !smtpKey) {
+      throw new ServiceUnavailableException('Konfigurasi email Brevo belum lengkap.');
+    }
+
+    const port = Number(this.config.get<string>('BREVO_SMTP_PORT') ?? '587');
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new ServiceUnavailableException('Konfigurasi port SMTP Brevo tidak valid.');
+    }
+    this.brevoTransporter ??= nodemailer.createTransport({
+      host: this.config.get<string>('BREVO_SMTP_HOST') ?? 'smtp-relay.brevo.com',
+      port,
+      secure: port === 465,
+      auth: { user: smtpLogin, pass: smtpKey },
+    });
+
+    await this.brevoTransporter.sendMail({
+      from: { name: senderName, address: senderEmail },
+      to: email,
+      subject: 'Kode reset password SKETCHOO',
+      text: `Kode reset password SKETCHOO kamu: ${code}. Kode berlaku selama 10 menit dan hanya dapat digunakan sekali. Jika kamu tidak meminta reset password, abaikan email ini.`,
+      html: `<p>Kode reset password SKETCHOO kamu:</p><p style="font-size:28px;font-weight:700;letter-spacing:8px">${code}</p><p>Kode berlaku selama 10 menit dan hanya dapat digunakan sekali.</p><p>Jika kamu tidak meminta reset password, abaikan email ini.</p>`,
+    });
   }
 
   private throwProviderError(
