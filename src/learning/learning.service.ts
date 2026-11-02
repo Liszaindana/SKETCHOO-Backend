@@ -47,7 +47,7 @@ const EXPLORE_ACTIVITIES = [
 type HistoryCursor = { created_at: string; id: string };
 type HistoryItem = {
   id: string;
-  type: 'sketch' | 'explore' | 'story';
+  type: 'sketch' | 'sketch_challenge' | 'explore' | 'story';
   title: string;
   summary: string;
   score: number | null;
@@ -276,7 +276,9 @@ export class LearningService {
   async history(user: AuthUser, query: HistoryQueryDto) {
     this.requireLearner(user);
     const cursor = this.decodeHistoryCursor(query.cursor);
-    const types = query.type ? [query.type] : ['sketch', 'explore', 'story'] as const;
+    const types = query.type
+      ? [query.type]
+      : ['sketch', 'sketch_challenge', 'explore', 'story'] as const;
     const pages = await Promise.all(types.map((type) => this.historyPage(user.id, type, query.limit ?? 25, cursor)));
     const all = pages.flat().sort((left, right) =>
       right.created_at.localeCompare(left.created_at) || right.id.localeCompare(left.id),
@@ -322,17 +324,25 @@ export class LearningService {
 
   private async historyPage(
     userId: string,
-    type: 'sketch' | 'explore' | 'story',
+    type: 'sketch' | 'sketch_challenge' | 'explore' | 'story',
     limit: number,
     cursor?: HistoryCursor,
   ): Promise<HistoryItem[]> {
     const db = this.supabase.getClient();
     const selects = {
       sketch: 'id, template_id, similarity_score, feedback, created_at, template:sketch_templates(title)',
+      sketch_challenge: 'id, level_id, stars_earned, score_awarded, feedback_message, artwork_image_url, created_at',
       explore: 'id, is_correct, points_awarded, created_at, question:explore_questions(prompt)',
       story: 'id, status, title, detected_object, created_at',
     } as const;
-    let request = (db as any).from(type === 'sketch' ? 'sketch_submissions' : type === 'explore' ? 'explore_attempts' : 'stories')
+    const table = type === 'sketch'
+      ? 'sketch_submissions'
+      : type === 'sketch_challenge'
+        ? 'sketch_challenge_submissions'
+        : type === 'explore'
+          ? 'explore_attempts'
+          : 'stories';
+    let request = (db as any).from(table)
       .select(selects[type]).eq('user_id', userId)
       .order('created_at', { ascending: false }).order('id', { ascending: false })
       .limit(limit + 1);
@@ -350,6 +360,16 @@ export class LearningService {
           title: template?.title ?? 'Tantangan menggambar',
           summary: row.feedback ?? (row.similarity_score === null ? 'Tantangan diselesaikan' : `Kemiripan ${row.similarity_score}%`),
           score: row.similarity_score,
+          created_at: row.created_at,
+        };
+      }
+      if (type === 'sketch_challenge') {
+        return {
+          id: row.id,
+          type,
+          title: row.level_id,
+          summary: row.feedback_message ?? 'Tantangan diselesaikan',
+          score: row.score_awarded ?? 0,
           created_at: row.created_at,
         };
       }

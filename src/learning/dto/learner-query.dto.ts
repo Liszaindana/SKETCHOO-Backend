@@ -28,8 +28,8 @@ export class CursorPageQueryDto extends LearnerListQueryDto {
 
 export class HistoryQueryDto extends LearnerListQueryDto {
   @IsOptional()
-  @IsIn(['sketch', 'explore', 'story'])
-  type?: 'sketch' | 'explore' | 'story';
+  @IsIn(['sketch', 'sketch_challenge', 'explore', 'story'])
+  type?: 'sketch' | 'sketch_challenge' | 'explore' | 'story';
 
   // History uses an opaque timestamp + UUID cursor across multiple tables.
   @IsOptional()
