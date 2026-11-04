@@ -9,6 +9,10 @@
   "scripts": {
     "build": "nest build",
     "deploy": "nest deploy",
+    "supabase:start": "npx --yes supabase@2.122.0 start",
+    "supabase:stop": "npx --yes supabase@2.122.0 stop",
+    "supabase:status": "npx --yes supabase@2.122.0 status",
+    "supabase:reset": "npx --yes supabase@2.122.0 db reset",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
