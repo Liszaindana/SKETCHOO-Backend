@@ -1,0 +1,25 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# File sementara Python
+__pycache__/
+*.py[cod]
+
+# Cache dan laporan pytest
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Pengaturan editor
+.vscode/
+.idea/
+
+# File rahasia dan log
+.env
+*.log
+
+# File sistem operasi
+.DS_Store
+Thumbs.db
