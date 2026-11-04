@@ -27,7 +27,24 @@ NestJS menyerahkan pengelolaan kata sandi dan sesi kepada Supabase Auth. Rute ya
 
 Saat konfirmasi email aktif di Supabase, `register` membalas `requires_email_confirmation: true` tanpa sesi, dan `login` menolak akun yang belum diverifikasi dengan `403 EMAIL_NOT_CONFIRMED`. `resend-verification` mengirim ulang tautan verifikasi dan sengaja membalas pesan generik agar status akun tidak bocor. Atur `SUPABASE_CONFIRM_REDIRECT_URL` untuk tujuan redirect setelah tautan verifikasi diklik.
 
-Reset kata sandi menggunakan OTP pemulihan dari Supabase, lalu token reset acak yang sudah di-hash dan hanya dapat digunakan sekali. Token disimpan di `password_reset_tokens`. Atur `SUPABASE_SECRET_KEY` atau `SUPABASE_SERVICE_ROLE_KEY` di berkas `.env` backend dan konfigurasi templat email pemulihan Supabase agar mengirim token enam digit. Simpan key dengan hak akses tinggi ini hanya di server; jangan pernah memasukkannya ke Flutter. Pembatas laju autentikasi saat ini menggunakan penyimpanan di dalam proses, jadi deployment produksi dengan beberapa instance memerlukan penyimpanan pembatas laju bersama.
+Reset kata sandi mengirim OTP empat digit melalui Brevo SMTP. OTP berlaku 10 menit, dibatasi hingga lima percobaan, dan hash-nya disimpan di `password_reset_codes`. Setelah terverifikasi, API menerbitkan reset token acak yang hanya dapat dipakai sekali dan menyimpan hash token di `password_reset_tokens`. Isi variabel `BREVO_SMTP_*` dan `BREVO_SENDER_*` di `.env`; sender harus diverifikasi di Brevo. Kredensial Supabase server dan SMTP hanya boleh disimpan di backend, jangan pernah di Flutter. Pembatas laju NestJS saat ini menggunakan penyimpanan di dalam proses, jadi deployment produksi dengan beberapa instance memerlukan penyimpanan pembatas laju bersama.
+
+## Menjalankan dengan Docker
+
+Repository menyediakan `Dockerfile` multi-stage dan `compose.yaml` untuk menjalankan API sebagai container production. Supabase PostgreSQL/Auth tetap layanan terkelola di luar Compose.
+
+1. Salin `.env.example` menjadi `.env` dan isi kredensial Supabase serta Brevo.
+2. Jalankan `docker compose up --build -d`.
+3. Periksa `docker compose ps` dan buka `http://localhost:3000/health` atau `http://localhost:3000/docs`.
+4. Hentikan dengan `docker compose down`.
+
+Desain arsitektur, tech stack, target environment VPS, serta langkah deployment dijelaskan di [docs/architecture-and-deployment.md](docs/architecture-and-deployment.md). VPS belum disediakan atau dideploy; Compose saat ini menyiapkan container API untuk demo lokal maupun sebagai dasar deployment.
+
+### Menyamakan versi Supabase lokal
+
+Script `supabase:*` selalu menjalankan Supabase CLI `2.122.0`, dan `supabase/config.toml` mengunci PostgreSQL lokal ke major version `17`. Setelah clone dan `npm ci`, jalankan `npm run supabase:start`, lalu cek URL/key lokal dengan `npm run supabase:status`. Stack lokal Supabase dijalankan oleh CLI melalui Docker; `compose.yaml` proyek hanya menjalankan API.
+
+`npm run supabase:reset` menghapus data database Supabase **lokal** lalu menerapkan migration dari repository. Jangan jalankan reset ke project cloud. Untuk API container yang mengakses Supabase lokal, set `SUPABASE_URL` ke URL lokal untuk proses host dan `SUPABASE_DOCKER_URL=http://host.docker.internal:54321` untuk container. Versi service Supabase cloud dikelola oleh Supabase, bukan oleh Docker Compose project ini.
 
 ## Fondasi Sekolah dan Smartboard
 
