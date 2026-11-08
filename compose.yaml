@@ -12,8 +12,8 @@ services:
       PORT: 3000
       API_V1_PREFIX: api/v1
       SUPABASE_URL: "${SUPABASE_DOCKER_URL:-${SUPABASE_URL}}"
-    ports:
-      - "${PORT:-3000}:3000"
+    expose:
+      - "3000"
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -29,3 +29,20 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  nginx:
+    image: nginx:stable-alpine
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
