@@ -166,6 +166,10 @@ diverifikasi oleh backend.
 
   `POST`            `/auth/login`             No                Login
 
+  `POST`            `/auth/google`            No                Menukar Google
+                                                                ID token menjadi
+                                                                sesi Supabase
+
   `POST`            `/auth/logout`            Yes               Logout sesi
 
   `POST`            `/auth/refresh`           Session-based     Refresh token
@@ -233,7 +237,29 @@ Response mengikuti hasil autentikasi Supabase yang disaring agar hanya
 informasi yang diperlukan yang dikirim ke client. Jangan pernah
 mengembalikan password.
 
-### 4.3 Current User
+### 4.3 Google Sign-In
+
+`POST /api/v1/auth/google`
+
+Client mobile memperoleh Google ID token melalui Google Sign-In SDK, lalu
+mengirimkannya ke backend. Backend menyerahkan token ke Supabase Auth untuk
+diverifikasi dan mengembalikan bentuk sesi yang sama dengan endpoint login.
+Jangan mengirim access token Google sebagai pengganti ID token.
+
+Request:
+
+```json
+{
+  "id_token": "<google-id-token>",
+  "access_token": "<google-access-token-if-required>"
+}
+```
+
+`access_token` hanya disertakan jika ID token memiliki klaim `at_hash`.
+Aktifkan provider Google pada Supabase dan daftarkan client ID aplikasi
+mobile agar Supabase dapat memvalidasi audience token.
+
+### 4.4 Current User
 
 `GET /api/v1/auth/me`
 

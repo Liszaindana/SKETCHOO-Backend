@@ -129,6 +129,43 @@ export class AuthService {
     };
   }
 
+  async loginWithGoogle(input: {
+    id_token: string;
+    access_token?: string;
+    nonce?: string;
+  }) {
+    let result;
+    try {
+      result = await this.publicClient().auth.signInWithIdToken({
+        provider: 'google',
+        token: input.id_token,
+        ...(input.access_token ? { access_token: input.access_token } : {}),
+        ...(input.nonce ? { nonce: input.nonce } : {}),
+      });
+    } catch {
+      throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
+    }
+
+    const { data, error } = result;
+    if (error?.status === 429) {
+      throw new HttpException('Terlalu banyak percobaan. Coba lagi nanti.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    if (error?.status && error.status >= 500) {
+      throw new ServiceUnavailableException('Layanan autentikasi sedang tidak tersedia.');
+    }
+    if (error || !data.session || !data.user) {
+      throw new UnauthorizedException('Autentikasi Google gagal. Silakan coba masuk kembali.');
+    }
+
+    return {
+      user: this.toPublicUser(data.user),
+      access_token: data.session.access_token,
+      token_type: 'Bearer',
+      expires_in: data.session.expires_in,
+      refresh_token: data.session.refresh_token,
+    };
+  }
+
   async refresh(refreshToken: string) {
     const { data, error } = await this.publicClient().auth.refreshSession({
       refresh_token: refreshToken,
