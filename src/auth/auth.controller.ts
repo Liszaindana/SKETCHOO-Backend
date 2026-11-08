@@ -11,6 +11,7 @@ import { AuthService } from './auth.service.js';
 import { Throttle } from '@nestjs/throttler';
 import { SupabaseAuthGuard } from './auth.guard.js';
 import { ForgotPasswordDto } from './dto/forgot-password.dto.js';
+import { GoogleLoginDto } from './dto/google-login.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RefreshDto } from './dto/refresh.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
@@ -35,6 +36,13 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   login(@Body() body: LoginDto) {
     return this.authService.login(body.email, body.password);
+  }
+
+  @Post('google')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  loginWithGoogle(@Body() body: GoogleLoginDto) {
+    return this.authService.loginWithGoogle(body);
   }
 
   @Post('refresh')

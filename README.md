@@ -18,6 +18,7 @@ NestJS menyerahkan pengelolaan kata sandi dan sesi kepada Supabase Auth. Rute ya
 - `POST /api/v1/auth/register`
 - `POST /api/v1/auth/resend-verification`
 - `POST /api/v1/auth/login`
+- `POST /api/v1/auth/google`
 - `POST /api/v1/auth/refresh`
 - `POST /api/v1/auth/logout`
 - `POST /api/v1/auth/forgot-password`
@@ -26,6 +27,10 @@ NestJS menyerahkan pengelolaan kata sandi dan sesi kepada Supabase Auth. Rute ya
 - `GET` dan `PATCH /api/v1/users/me`
 
 Saat konfirmasi email aktif di Supabase, `register` membalas `requires_email_confirmation: true` tanpa sesi, dan `login` menolak akun yang belum diverifikasi dengan `403 EMAIL_NOT_CONFIRMED`. `resend-verification` mengirim ulang tautan verifikasi dan sengaja membalas pesan generik agar status akun tidak bocor. Atur `SUPABASE_CONFIRM_REDIRECT_URL` untuk tujuan redirect setelah tautan verifikasi diklik.
+
+Password saat daftar dan reset minimal 8 karakter serta wajib mengandung huruf kecil, huruf besar, dan angka. Simbol boleh digunakan, tetapi tidak wajib. Aturan yang sama dicontohkan di `supabase/config.toml`; pada Supabase cloud, sesuaikan juga bagian **Password Requirements** di pengaturan Auth project.
+
+Login Google tersedia melalui `POST /api/v1/auth/google`. Aplikasi mobile harus memperoleh Google ID token dengan Google Sign-In SDK dan mengirimkannya sebagai `id_token`; backend menukar token tersebut menjadi sesi Supabase. Sebelum digunakan, aktifkan provider Google di **Supabase Dashboard → Authentication → Sign In / Providers → Google** dan masukkan OAuth Client ID serta Client Secret dari Google Cloud. Pastikan Client ID Android yang dipakai mobile juga diizinkan oleh provider Supabase. Tombol Google di aplikasi mobile perlu mengirim token ke endpoint ini dan menyimpan access/refresh token hasil respons seperti alur login biasa.
 
 Reset kata sandi mengirim OTP empat digit melalui Brevo SMTP. OTP berlaku 10 menit, dibatasi hingga lima percobaan, dan hash-nya disimpan di `password_reset_codes`. Setelah terverifikasi, API menerbitkan reset token acak yang hanya dapat dipakai sekali dan menyimpan hash token di `password_reset_tokens`. Isi variabel `BREVO_SMTP_*` dan `BREVO_SENDER_*` di `.env`; sender harus diverifikasi di Brevo. Kredensial Supabase server dan SMTP hanya boleh disimpan di backend, jangan pernah di Flutter. Pembatas laju NestJS saat ini menggunakan penyimpanan di dalam proses, jadi deployment produksi dengan beberapa instance memerlukan penyimpanan pembatas laju bersama.
 
