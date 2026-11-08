@@ -36,18 +36,18 @@ Reset kata sandi mengirim OTP empat digit melalui Brevo SMTP. OTP berlaku 10 men
 
 ## Menjalankan dengan Docker
 
-Repository menyediakan `Dockerfile` multi-stage dan `compose.yaml` untuk menjalankan API sebagai container production. Supabase PostgreSQL/Auth tetap layanan terkelola di luar Compose.
+Repository menyediakan `Dockerfile` multi-stage untuk API dan Nginx sebagai reverse proxy di `compose.yaml`. Permintaan masuk melalui Nginx, lalu diteruskan ke API NestJS di jaringan internal Docker. Supabase PostgreSQL/Auth tetap layanan terkelola di luar Compose.
 
 1. Salin `.env.example` menjadi `.env` dan isi kredensial Supabase serta Brevo.
 2. Jalankan `docker compose up --build -d`.
-3. Periksa `docker compose ps` dan buka `http://localhost:3000/health` atau `http://localhost:3000/docs`.
+3. Periksa `docker compose ps` dan buka `http://localhost:8080/health` atau `http://localhost:8080/docs`. Port Nginx dapat diubah lewat `NGINX_PORT`.
 4. Hentikan dengan `docker compose down`.
 
-Desain arsitektur, tech stack, target environment VPS, serta langkah deployment dijelaskan di [docs/architecture-and-deployment.md](docs/architecture-and-deployment.md). VPS belum disediakan atau dideploy; Compose saat ini menyiapkan container API untuk demo lokal maupun sebagai dasar deployment.
+VPS belum disediakan atau dideploy. Compose menyiapkan API dan Nginx untuk demo lokal maupun sebagai dasar deployment.
 
 ### Menyamakan versi Supabase lokal
 
-Script `supabase:*` selalu menjalankan Supabase CLI `2.122.0`, dan `supabase/config.toml` mengunci PostgreSQL lokal ke major version `17`. Setelah clone dan `npm ci`, jalankan `npm run supabase:start`, lalu cek URL/key lokal dengan `npm run supabase:status`. Stack lokal Supabase dijalankan oleh CLI melalui Docker; `compose.yaml` proyek hanya menjalankan API.
+Script `supabase:*` selalu menjalankan Supabase CLI `2.122.0`, dan `supabase/config.toml` mengunci PostgreSQL lokal ke major version `17`. Setelah clone dan `npm ci`, jalankan `npm run supabase:start`, lalu cek URL/key lokal dengan `npm run supabase:status`. Stack lokal Supabase dijalankan oleh CLI melalui Docker, sedangkan `compose.yaml` proyek menjalankan API dan reverse proxy Nginx.
 
 `npm run supabase:reset` menghapus data database Supabase **lokal** lalu menerapkan migration dari repository. Jangan jalankan reset ke project cloud. Untuk API container yang mengakses Supabase lokal, set `SUPABASE_URL` ke URL lokal untuk proses host dan `SUPABASE_DOCKER_URL=http://host.docker.internal:54321` untuk container. Versi service Supabase cloud dikelola oleh Supabase, bukan oleh Docker Compose project ini.
 
