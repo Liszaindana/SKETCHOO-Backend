@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { HealthController } from './health/health.controller.js';
 import { LearningModule } from './learning/learning.module.js';
 import { SchoolsModule } from './schools/schools.module.js';
+import { SketchToStoryModule } from './sketch-to-story/sketch-to-story.module.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
@@ -20,6 +21,7 @@ const observeEnabled = Boolean(
     AuthModule,
     LearningModule,
     SchoolsModule,
+    SketchToStoryModule,
     ...(observeEnabled
       ? [
           ObserveModule.forRoot({

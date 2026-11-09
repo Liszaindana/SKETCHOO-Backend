@@ -18,6 +18,7 @@ NestJS menyerahkan pengelolaan kata sandi dan sesi kepada Supabase Auth. Rute ya
 - `POST /api/v1/auth/register`
 - `POST /api/v1/auth/resend-verification`
 - `POST /api/v1/auth/login`
+- `POST /api/v1/auth/google`
 - `POST /api/v1/auth/refresh`
 - `POST /api/v1/auth/logout`
 - `POST /api/v1/auth/forgot-password`
@@ -27,7 +28,28 @@ NestJS menyerahkan pengelolaan kata sandi dan sesi kepada Supabase Auth. Rute ya
 
 Saat konfirmasi email aktif di Supabase, `register` membalas `requires_email_confirmation: true` tanpa sesi, dan `login` menolak akun yang belum diverifikasi dengan `403 EMAIL_NOT_CONFIRMED`. `resend-verification` mengirim ulang tautan verifikasi dan sengaja membalas pesan generik agar status akun tidak bocor. Atur `SUPABASE_CONFIRM_REDIRECT_URL` untuk tujuan redirect setelah tautan verifikasi diklik.
 
-Reset kata sandi menggunakan OTP pemulihan dari Supabase, lalu token reset acak yang sudah di-hash dan hanya dapat digunakan sekali. Token disimpan di `password_reset_tokens`. Atur `SUPABASE_SECRET_KEY` atau `SUPABASE_SERVICE_ROLE_KEY` di berkas `.env` backend dan konfigurasi templat email pemulihan Supabase agar mengirim token enam digit. Simpan key dengan hak akses tinggi ini hanya di server; jangan pernah memasukkannya ke Flutter. Pembatas laju autentikasi saat ini menggunakan penyimpanan di dalam proses, jadi deployment produksi dengan beberapa instance memerlukan penyimpanan pembatas laju bersama.
+Password saat daftar dan reset minimal 8 karakter serta wajib mengandung huruf kecil, huruf besar, dan angka. Simbol boleh digunakan, tetapi tidak wajib. Aturan yang sama dicontohkan di `supabase/config.toml`; pada Supabase cloud, sesuaikan juga bagian **Password Requirements** di pengaturan Auth project.
+
+Login Google tersedia melalui `POST /api/v1/auth/google`. Aplikasi mobile harus memperoleh Google ID token dengan Google Sign-In SDK dan mengirimkannya sebagai `id_token`; backend menukar token tersebut menjadi sesi Supabase. Sebelum digunakan, aktifkan provider Google di **Supabase Dashboard → Authentication → Sign In / Providers → Google** dan masukkan OAuth Client ID serta Client Secret dari Google Cloud. Pastikan Client ID Android yang dipakai mobile juga diizinkan oleh provider Supabase. Tombol Google di aplikasi mobile perlu mengirim token ke endpoint ini dan menyimpan access/refresh token hasil respons seperti alur login biasa.
+
+Reset kata sandi mengirim OTP empat digit melalui Brevo SMTP. OTP berlaku 10 menit, dibatasi hingga lima percobaan, dan hash-nya disimpan di `password_reset_codes`. Setelah terverifikasi, API menerbitkan reset token acak yang hanya dapat dipakai sekali dan menyimpan hash token di `password_reset_tokens`. Isi variabel `BREVO_SMTP_*` dan `BREVO_SENDER_*` di `.env`; sender harus diverifikasi di Brevo. Kredensial Supabase server dan SMTP hanya boleh disimpan di backend, jangan pernah di Flutter. Pembatas laju NestJS saat ini menggunakan penyimpanan di dalam proses, jadi deployment produksi dengan beberapa instance memerlukan penyimpanan pembatas laju bersama.
+
+## Menjalankan dengan Docker
+
+Repository menyediakan `Dockerfile` multi-stage untuk API dan Nginx sebagai reverse proxy di `compose.yaml`. Permintaan masuk melalui Nginx, lalu diteruskan ke API NestJS di jaringan internal Docker. Supabase PostgreSQL/Auth tetap layanan terkelola di luar Compose.
+
+1. Salin `.env.example` menjadi `.env` dan isi kredensial Supabase serta Brevo.
+2. Jalankan `docker compose up --build -d`.
+3. Periksa `docker compose ps` dan buka `http://localhost:8080/health` atau `http://localhost:8080/docs`. Port Nginx dapat diubah lewat `NGINX_PORT`.
+4. Hentikan dengan `docker compose down`.
+
+VPS belum disediakan atau dideploy. Compose menyiapkan API dan Nginx untuk demo lokal maupun sebagai dasar deployment.
+
+### Menyamakan versi Supabase lokal
+
+Script `supabase:*` selalu menjalankan Supabase CLI `2.122.0`, dan `supabase/config.toml` mengunci PostgreSQL lokal ke major version `17`. Setelah clone dan `npm ci`, jalankan `npm run supabase:start`, lalu cek URL/key lokal dengan `npm run supabase:status`. Stack lokal Supabase dijalankan oleh CLI melalui Docker, sedangkan `compose.yaml` proyek menjalankan API dan reverse proxy Nginx.
+
+`npm run supabase:reset` menghapus data database Supabase **lokal** lalu menerapkan migration dari repository. Jangan jalankan reset ke project cloud. Untuk API container yang mengakses Supabase lokal, set `SUPABASE_URL` ke URL lokal untuk proses host dan `SUPABASE_DOCKER_URL=http://host.docker.internal:54321` untuk container. Versi service Supabase cloud dikelola oleh Supabase, bukan oleh Docker Compose project ini.
 
 ## Fondasi Sekolah dan Smartboard
 
