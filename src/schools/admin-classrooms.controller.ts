@@ -40,4 +40,20 @@ export class AdminClassroomsController {
   ) {
     return this.classrooms.update(user, classroomId, body);
   }
+
+  @Get(':classroom_id/code')
+  getCode(
+    @CurrentUser() user: AuthUser,
+    @Param('classroom_id', new ParseUUIDPipe()) classroomId: string,
+  ) {
+    return this.classrooms.getCode(user, classroomId);
+  }
+
+  @Post(':classroom_id/code')
+  regenerateCode(
+    @CurrentUser() user: AuthUser,
+    @Param('classroom_id', new ParseUUIDPipe()) classroomId: string,
+  ) {
+    return this.classrooms.regenerateCode(user, classroomId);
+  }
 }

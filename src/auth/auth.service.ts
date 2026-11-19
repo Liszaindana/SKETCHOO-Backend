@@ -14,6 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
+import type { UpdateProfileDto } from './dto/update-profile.dto.js';
 
 const RESET_TOKEN_TTL_SECONDS = 300;
 const RESET_CODE_TTL_SECONDS = 600;
@@ -221,10 +222,14 @@ export class AuthService {
     return data.user;
   }
 
-  async updateName(accessToken: string, name: string) {
+  async updateProfile(accessToken: string, input: UpdateProfileDto) {
+    const dataToUpdate: Record<string, unknown> = {};
+    if (input.name !== undefined) dataToUpdate.name = input.name.trim();
+    if (input.avatar !== undefined) dataToUpdate.avatar = input.avatar.trim();
+
     const response = await this.authRequest('/user', accessToken, {
       method: 'PUT',
-      body: JSON.stringify({ data: { name: name.trim() } }),
+      body: JSON.stringify({ data: dataToUpdate }),
     });
     if (!response.ok) {
       if (response.status === 401) {
@@ -235,6 +240,10 @@ export class AuthService {
 
     const user = (await response.json()) as User;
     return this.toPublicUser(user);
+  }
+
+  async updateName(accessToken: string, name: string) {
+    return this.updateProfile(accessToken, { name });
   }
 
   async forgotPassword(email: string) {
@@ -441,9 +450,11 @@ export class AuthService {
   toPublicUser(user: User | null) {
     if (!user) throw new ServiceUnavailableException('Supabase tidak mengembalikan data user.');
     const name = user.user_metadata?.name ?? user.user_metadata?.full_name ?? null;
+    const avatar = user.user_metadata?.avatar ?? user.user_metadata?.avatar_url ?? null;
     return {
       id: user.id,
       name,
+      avatar,
       email: user.email ?? null,
       role: user.app_metadata?.role ?? 'user',
       created_at: user.created_at,

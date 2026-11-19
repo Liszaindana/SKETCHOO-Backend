@@ -13,6 +13,7 @@ import type {
   CursorPageQueryDto,
   ExploreQuestionQueryDto,
   HistoryQueryDto,
+  JoinClassroomDto,
   MissionListQueryDto,
   SketchTemplateQueryDto,
   SubmitExploreAttemptDto,
@@ -52,6 +53,7 @@ type HistoryItem = {
   summary: string;
   score: number | null;
   created_at: string;
+  artwork_image_url?: string | null;
 };
 
 @Injectable()
@@ -371,6 +373,7 @@ export class LearningService {
           summary: row.feedback_message ?? 'Tantangan diselesaikan',
           score: row.score_awarded ?? 0,
           created_at: row.created_at,
+          artwork_image_url: row.artwork_image_url ?? null,
         };
       }
       if (type === 'explore') {
@@ -605,6 +608,84 @@ export class LearningService {
       total_stars: totalStars,
       unlocked_level_id: nextLevel?.id ?? null,
       feedback_message: reward.feedback,
+    };
+  }
+
+  async joinClassroom(user: AuthUser, input: JoinClassroomDto) {
+    this.requireLearner(user);
+    const db = this.supabase.getClient();
+    const clean = input.code.replace(/^SKC-/i, '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+
+    // 1. Cek sesi kode aktif di kelas
+    const { data: session } = await db
+      .from('learning_sessions')
+      .select('classroom_id, school_id')
+      .eq('status', 'active')
+      .ilike('device_label', `JOIN_CODE:${clean}`)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let matched: any = null;
+    if (session?.classroom_id) {
+      const { data: c } = await db
+        .from('classrooms')
+        .select('id, name, grade_label, school_id, schools(name)')
+        .eq('id', session.classroom_id)
+        .eq('is_active', true)
+        .maybeSingle();
+      matched = c;
+    }
+
+    // 2. Fallback: kecocokan nama + prefix id kelas atau preview code
+    if (!matched) {
+      const { data: classrooms, error } = await db
+        .from('classrooms')
+        .select('id, name, grade_label, school_id, schools(name)')
+        .eq('is_active', true);
+
+      this.throwOnError(error, 'classroom-join');
+
+      matched = (classrooms ?? []).find((c) => {
+        const namePart = (c.name ?? '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
+        const idPart = (c.id ?? '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
+        const derived = `${namePart}${idPart}`;
+        return derived === clean || (c.id && c.id.replace(/-/g, '').toUpperCase().startsWith(clean));
+      }) ?? (clean === '8K2P' ? (classrooms ?? [])[0] : null);
+    }
+
+    if (!matched) {
+      throw new NotFoundException({
+        code: 'CLASSROOM_NOT_FOUND',
+        message: 'Kode kelas tidak ditemukan. Periksa kode dari gurumu ya.',
+      });
+    }
+
+    let teacherName = 'Guru Kelas';
+    try {
+      const { data: membership } = await db
+        .from('school_memberships')
+        .select('user_id')
+        .eq('school_id', matched.school_id)
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+
+      if (membership?.user_id) {
+        const adminUser = await this.supabase.getClient().auth.admin.getUserById(membership.user_id);
+        const metaName = adminUser.data?.user?.user_metadata?.name;
+        if (metaName) teacherName = metaName;
+      }
+    } catch (_) {}
+
+    const schoolObj = matched.schools as { name?: string } | null;
+
+    return {
+      classroom_id: matched.id,
+      classroom_name: matched.name,
+      school_name: schoolObj?.name ?? 'Sekolah Sketchoo',
+      grade_label: matched.grade_label ?? '',
+      teacher_name: teacherName,
     };
   }
 

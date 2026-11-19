@@ -102,6 +102,88 @@ export class AdminClassroomsService {
     return data;
   }
 
+  async getCode(user: AuthUser, classroomId: string) {
+    const { school_id: schoolId } = await this.access.requireAdmin(user);
+    const db = this.access.getClient();
+
+    const { data: classroom, error } = await db
+      .from('classrooms')
+      .select('id, name')
+      .eq('id', classroomId)
+      .eq('school_id', schoolId)
+      .single();
+
+    if (error || !classroom) {
+      throw new NotFoundException({
+        code: 'NOT_FOUND',
+        message: 'Kelas tidak ditemukan atau tidak dapat diakses.',
+      });
+    }
+
+    const { data: session } = await db
+      .from('learning_sessions')
+      .select('id, device_label')
+      .eq('classroom_id', classroomId)
+      .eq('status', 'active')
+      .ilike('device_label', 'JOIN_CODE:%')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (session?.device_label) {
+      const short = session.device_label.replace(/^JOIN_CODE:/i, '').trim();
+      return { code: `SKC-${short}`, short_code: short };
+    }
+
+    return this.regenerateCode(user, classroomId);
+  }
+
+  async regenerateCode(user: AuthUser, classroomId: string) {
+    const { school_id: schoolId } = await this.access.requireAdmin(user);
+    const db = this.access.getClient();
+
+    const { data: classroom, error: clError } = await db
+      .from('classrooms')
+      .select('id, name')
+      .eq('id', classroomId)
+      .eq('school_id', schoolId)
+      .single();
+
+    if (clError || !classroom) {
+      throw new NotFoundException({
+        code: 'NOT_FOUND',
+        message: 'Kelas tidak ditemukan atau tidak dapat diakses.',
+      });
+    }
+
+    // Karakter alphanumeric tanpa huruf ambigu (0/O, 1/I)
+    const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    let short = '';
+    for (let i = 0; i < 6; i++) {
+      short += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
+    // Akhiri sesi kode sebelumnya untuk kelas ini
+    await db
+      .from('learning_sessions')
+      .update({ status: 'ended', ended_at: new Date().toISOString() })
+      .eq('classroom_id', classroomId)
+      .eq('status', 'active')
+      .ilike('device_label', 'JOIN_CODE:%');
+
+    const { error } = await db.from('learning_sessions').insert({
+      school_id: schoolId,
+      classroom_id: classroomId,
+      created_by_user_id: user.id,
+      device_label: `JOIN_CODE:${short}`,
+      status: 'active',
+    });
+
+    if (error) this.providerUnavailable(error, 'classroom-code-generate');
+
+    return { code: `SKC-${short}`, short_code: short };
+  }
+
   private providerUnavailable(
     error: { code?: string; status?: number },
     operation: string,

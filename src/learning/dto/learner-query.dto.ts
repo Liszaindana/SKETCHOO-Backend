@@ -8,6 +8,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 
 export class LearnerListQueryDto {
@@ -98,4 +99,12 @@ export class CompleteSketchChallengeDto {
   @MaxLength(2048)
   artwork_image_url?: string;
 }
+
+export class JoinClassroomDto {
+  @IsString()
+  @MinLength(4)
+  @MaxLength(32)
+  code!: string;
+}
+
 

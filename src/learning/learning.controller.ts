@@ -17,6 +17,7 @@ import {
   CursorPageQueryDto,
   ExploreQuestionQueryDto,
   HistoryQueryDto,
+  JoinClassroomDto,
   MissionListQueryDto,
   SketchTemplateQueryDto,
   SubmitExploreAttemptDto,
@@ -66,6 +67,14 @@ export class LearningController {
     @Body() body: CompleteSketchChallengeDto,
   ) {
     return this.learning.completeSketchChallenge(user, body);
+  }
+
+  @Post('classrooms/join')
+  joinClassroom(
+    @CurrentUser() user: AuthUser,
+    @Body() body: JoinClassroomDto,
+  ) {
+    return this.learning.joinClassroom(user, body);
   }
 
   @Get('explore/activities')

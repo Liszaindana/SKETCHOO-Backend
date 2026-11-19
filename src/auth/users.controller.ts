@@ -28,7 +28,7 @@ export class UsersController {
     @Req() request: AuthenticatedRequest,
   ) {
     return {
-      user: await this.authService.updateName(request.accessToken!, body.name),
+      user: await this.authService.updateProfile(request.accessToken!, body),
     };
   }
 }
