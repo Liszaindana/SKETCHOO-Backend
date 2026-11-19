@@ -676,7 +676,9 @@ export class LearningService {
         const metaName = adminUser.data?.user?.user_metadata?.name;
         if (metaName) teacherName = metaName;
       }
-    } catch (_) {}
+    } catch {
+      // Abaikan jika profil admin sekolah tidak dapat dimuat
+    }
 
     const schoolObj = matched.schools as { name?: string } | null;
 

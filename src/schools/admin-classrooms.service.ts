@@ -163,23 +163,32 @@ export class AdminClassroomsService {
       short += chars.charAt(Math.floor(Math.random() * chars.length));
     }
 
-    // Akhiri sesi kode sebelumnya untuk kelas ini
-    await db
+    // Perbarui sesi aktif yang ada atau buat sesi baru jika belum ada
+    const { data: existingSession } = await db
       .from('learning_sessions')
-      .update({ status: 'ended', ended_at: new Date().toISOString() })
+      .select('id')
       .eq('classroom_id', classroomId)
       .eq('status', 'active')
-      .ilike('device_label', 'JOIN_CODE:%');
+      .maybeSingle();
 
-    const { error } = await db.from('learning_sessions').insert({
-      school_id: schoolId,
-      classroom_id: classroomId,
-      created_by_user_id: user.id,
-      device_label: `JOIN_CODE:${short}`,
-      status: 'active',
-    });
-
-    if (error) this.providerUnavailable(error, 'classroom-code-generate');
+    if (existingSession) {
+      const { error: updateErr } = await db
+        .from('learning_sessions')
+        .update({
+          device_label: `JOIN_CODE:${short}`,
+        })
+        .eq('id', existingSession.id);
+      if (updateErr) this.providerUnavailable(updateErr, 'classroom-code-update');
+    } else {
+      const { error } = await db.from('learning_sessions').insert({
+        school_id: schoolId,
+        classroom_id: classroomId,
+        created_by_user_id: user.id,
+        device_label: `JOIN_CODE:${short}`,
+        status: 'active',
+      });
+      if (error) this.providerUnavailable(error, 'classroom-code-generate');
+    }
 
     return { code: `SKC-${short}`, short_code: short };
   }
